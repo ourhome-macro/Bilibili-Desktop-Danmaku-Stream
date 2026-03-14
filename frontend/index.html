@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>B站弹幕播放器</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    }
+
+    #danmaku-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    #video-container {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 600px;
+      height: 337px;
+      border-radius: 12px;
+      overflow: hidden;
+      z-index: 100;
+      background: #000;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      pointer-events: auto;
+    }
+
+    #video-container::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
+      z-index: 11;
+      pointer-events: none;
+    }
+
+    #video-player {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    #video-info {
+      position: absolute;
+      top: 8px;
+      left: 12px;
+      right: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 12;
+      pointer-events: none;
+    }
+
+    #video-title {
+      color: #fff;
+      font-size: 12px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 400px;
+    }
+
+    #video-controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      background: linear-gradient(0deg, rgba(0, 0, 0, 0.7) 0%, transparent 100%);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      z-index: 12;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #video-container:hover #video-controls {
+      opacity: 1;
+    }
+
+    .control-btn {
+      background: none;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      padding: 8px;
+      font-size: 14px;
+      transition: color 0.2s;
+      pointer-events: auto;
+    }
+
+    .control-btn:hover {
+      color: #00a1d6;
+    }
+
+    #comment-btn {
+      position: absolute;
+      bottom: 8px;
+      right: 12px;
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      color: #fff;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      cursor: pointer;
+      z-index: 13;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s ease;
+      pointer-events: auto;
+    }
+
+    #comment-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.05);
+    }
+
+    #comment-panel {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 400px;
+      max-height: 500px;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      z-index: 1001;
+      display: none;
+      overflow: hidden;
+      pointer-events: auto;
+    }
+
+    #comment-panel.show {
+      display: block;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.95);
+      }
+
+      to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+    }
+
+    #comment-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    #comment-header h3 {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    #close-comment {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px;
+      line-height: 1;
+    }
+
+    #close-comment:hover {
+      color: #fff;
+    }
+
+    #comment-list {
+      max-height: 400px;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    #comment-list::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #comment-list::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 3px;
+    }
+
+    #comment-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 3px;
+    }
+
+    .comment-item {
+      padding: 12px;
+      margin-bottom: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      transition: background 0.2s;
+    }
+
+    .comment-item:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .comment-user {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .comment-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      margin-right: 10px;
+      object-fit: cover;
+    }
+
+    .comment-name {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .comment-time {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 11px;
+      margin-left: auto;
+    }
+
+    .comment-content {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 13px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .comment-stats {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .comment-stat {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 12px;
+    }
+
+    #input-container {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      z-index: 1000;
+      pointer-events: auto;
+    }
+
+    #video-input {
+      width: 300px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(10px);
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.3s ease;
+      pointer-events: auto;
+      cursor: text;
+    }
+
+    #video-input::placeholder {
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    #video-input:focus {
+      background: rgba(255, 255, 255, 0.25);
+      box-shadow: 0 0 0 2px rgba(0, 161, 214, 0.5);
+    }
+
+    #play-btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #00a1d6 0%, #00b5e2 100%);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      pointer-events: auto;
+    }
+
+    #play-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 15px rgba(0, 161, 214, 0.4);
+    }
+
+    #status-text {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 20px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(10px);
+      color: #fff;
+      font-size: 13px;
+      border-radius: 20px;
+      z-index: 100;
+      display: none;
+    }
+
+    #status-text.show {
+      display: block;
+      animation: fadeInOut 2s ease;
+    }
+
+    @keyframes fadeInOut {
+      0% {
+        opacity: 0;
+      }
+
+      20% {
+        opacity: 1;
+      }
+
+      80% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0;
+      }
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #00a1d6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    @keyframes spin {
+      to {
+        transform: translate(-50%, -50%) rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="danmaku-canvas"></canvas>
+
+  <div id="video-container">
+    <div id="video-info">
+      <span id="video-title">输入BV号或视频链接开始播放</span>
+    </div>
+    <video id="video-player" playsinline></video>
+    <div id="video-controls">
+      <button class="control-btn" id="play-pause-btn">▶</button>
+      <button class="control-btn" id="stop-btn">⏹</button>
+    </div>
+    <button id="comment-btn">评论</button>
+  </div>
+
+  <div id="comment-panel">
+    <div id="comment-header">
+      <h3>评论</h3>
+      <button id="close-comment">×</button>
+    </div>
+    <div id="comment-list">
+      <div class="loading-spinner"></div>
+    </div>
+  </div>
+
+  <div id="input-container">
+    <input type="text" id="video-input" placeholder="输入BV号或B站视频链接">
+    <button id="play-btn">播放</button>
+  </div>
+
+  <div id="status-text"></div>
+
+  <script src="renderer.js"></script>
+</body>
+
+</html>
