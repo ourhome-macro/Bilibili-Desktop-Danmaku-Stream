@@ -137,6 +137,12 @@ npm run build:linux
 - 请遵守B站用户协议和相关法律法规
 - 视频内容版权归原作者所有
 
+## 项目演示
+
+![7a2fbcbc3f8369d2077ed7e4fb5f1bce](images/2.png)
+
+![s](images/1.png)
+
 ## License
 
 MIT
